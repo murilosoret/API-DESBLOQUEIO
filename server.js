@@ -468,31 +468,68 @@ app.post('/gerar-parcelas/:cnpj', async (req, res) => {
 });
 
 // Rota para remover liberação (bloquear novamente)
+// Rota para remover liberação (bloquear novamente)
 app.delete('/bloquear/:cnpj', async (req, res) => {
     const senha = req.headers['x-senha'];
     const cnpj = limparCnpj(req.params.cnpj);
     const cnpjFormatado = formatarCnpj(cnpj);
 
+    console.log(`📌 Requisição de bloqueio - CNPJ original: ${req.params.cnpj}`);
+    console.log(`📌 CNPJ limpo: ${cnpj}`);
+    console.log(`📌 CNPJ formatado: ${cnpjFormatado}`);
+    console.log(`🔑 Senha recebida: ${senha}`);
+
     if (senha !== SENHA_ADMIN) {
+        console.log(`❌ Senha inválida: ${senha} - Esperada: ${SENHA_ADMIN}`);
         return res.status(401).json({ erro: 'Senha inválida' });
     }
 
     try {
-        const result = await pool.query(
-            'UPDATE EMPRESAS SET BLOQUEADO = TRUE, MOTIVO_BLOQUEIO = "BLOQUEIO MANUAL" WHERE CNPJ = $1 RETURNING COD_EMP',
+        // Primeiro verificar se a empresa existe
+        const empresaCheck = await pool.query(
+            'SELECT COD_EMP, BLOQUEADO, CNPJ FROM EMPRESAS WHERE CNPJ = $1',
             [cnpjFormatado]
         );
 
-        if (result.rowCount === 0) {
+        console.log(`🔍 Empresa encontrada: ${empresaCheck.rows.length}`);
+
+        if (empresaCheck.rows.length === 0) {
+            console.log(`❌ Empresa não encontrada para o CNPJ: ${cnpjFormatado}`);
             return res.status(404).json({ erro: 'Empresa não encontrada' });
         }
 
-        console.log(`🔒 Cliente bloqueado: ${cnpj}`);
-        res.json({ bloqueado: true, cnpj: cnpj });
+        console.log(`✅ Empresa encontrada - COD_EMP: ${empresaCheck.rows[0].cod_emp}, BLOQUEADO: ${empresaCheck.rows[0].bloqueado}`);
+
+        // Bloquear a empresa
+        const result = await pool.query(
+            'UPDATE EMPRESAS SET BLOQUEADO = TRUE, MOTIVO_BLOQUEIO = $1 WHERE CNPJ = $2 RETURNING COD_EMP, BLOQUEADO',
+            ['BLOQUEIO_MANUAL', cnpjFormatado]
+        );
+
+        console.log(`📊 Resultado UPDATE - rowCount: ${result.rowCount}`);
+
+        if (result.rowCount === 0) {
+            console.log(`❌ Nenhuma linha foi atualizada para o CNPJ: ${cnpjFormatado}`);
+            return res.status(404).json({ erro: 'Empresa não encontrada para bloquear' });
+        }
+
+        console.log(`🔒 Cliente bloqueado com sucesso: ${cnpj}`);
+        res.json({
+            sucesso: true,
+            bloqueado: true,
+            cnpj: cnpj,
+            cod_emp: result.rows[0].cod_emp
+        });
 
     } catch (error) {
-        console.error('Erro ao bloquear:', error);
-        res.status(500).json({ erro: 'Erro ao bloquear empresa' });
+        console.error('❌ Erro detalhado ao bloquear:', error);
+        console.error('❌ Mensagem:', error.message);
+        console.error('❌ Stack:', error.stack);
+        res.status(500).json({
+            erro: 'Erro ao bloquear empresa',
+            detalhe: error.message,
+            stack: error.stack
+        });
     }
 });
 
