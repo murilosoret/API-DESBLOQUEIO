@@ -429,6 +429,9 @@ app.post('/gerar-parcelas/:cnpj', async (req, res) => {
     const cnpj = limparCnpj(req.params.cnpj);
     const { parcelas } = req.body;
 
+    console.log(`📌 Gerar parcelas - CNPJ: ${cnpj}`);
+    console.log(`📦 Parcelas a gerar: ${parcelas.length}`);
+
     if (senha !== SENHA_ADMIN) {
         return res.status(401).json({ erro: 'Senha inválida' });
     }
@@ -447,27 +450,30 @@ app.post('/gerar-parcelas/:cnpj', async (req, res) => {
 
         const codEmp = empresaResult.rows[0].cod_emp;
 
+        // Primeiro, remover parcelas existentes da empresa (opcional)
+        // await pool.query('DELETE FROM PARCELAS WHERE COD_EMP = $1', [codEmp]);
+
         // Inserir as parcelas
+        let inseridas = 0;
         for (const parcela of parcelas) {
-            await pool.query(
+            const result = await pool.query(
                 `INSERT INTO PARCELAS (COD_EMP, NUMERO_PARCELA, VALOR, DATA_VENCIMENTO, PAGO) 
-                 VALUES ($1, $2, $3, $4, $5)
-                 ON CONFLICT (COD_EMP, NUMERO_PARCELA) DO UPDATE SET 
-                 VALOR = EXCLUDED.VALOR, DATA_VENCIMENTO = EXCLUDED.DATA_VENCIMENTO`,
+                 VALUES ($1, $2, $3, $4, $5)`,
                 [codEmp, parcela.numero_parcela, parcela.valor, parcela.data_vencimento, parcela.pago]
             );
+            if (result.rowCount > 0) inseridas++;
         }
 
-        console.log(`✅ Geradas ${parcelas.length} parcelas para empresa ${cnpj}`);
-        res.json({ sucesso: true, mensagem: `${parcelas.length} parcelas geradas com sucesso` });
+        console.log(`✅ Geradas ${inseridas} parcelas para empresa ${cnpj}`);
+        res.json({ sucesso: true, mensagem: `${inseridas} parcelas geradas com sucesso` });
 
     } catch (error) {
-        console.error('Erro ao gerar parcelas:', error);
-        res.status(500).json({ erro: 'Erro ao gerar parcelas' });
+        console.error('❌ Erro ao gerar parcelas:', error);
+        console.error('❌ Detalhe:', error.message);
+        res.status(500).json({ erro: 'Erro ao gerar parcelas', detalhe: error.message });
     }
 });
 
-// Rota para remover liberação (bloquear novamente)
 // Rota para remover liberação (bloquear novamente)
 app.delete('/bloquear/:cnpj', async (req, res) => {
     const senha = req.headers['x-senha'];
