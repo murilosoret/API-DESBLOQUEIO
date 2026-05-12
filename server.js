@@ -255,12 +255,15 @@ app.get('/empresas', async (req, res) => {
                    E.BLOQUEADO, 
                    E.PLANO, 
                    E.VALOR_MENSAL,
+                   TO_CHAR(E.DATA_CADASTRO, 'DD/MM/YYYY') AS DATA_CADASTRO,
                    COUNT(P.COD_PAR) AS TOTAL_PARCELAS,
-                   SUM(CASE WHEN P.PAGO = FALSE AND P.DATA_VENCIMENTO < CURRENT_DATE THEN 1 ELSE 0 END) AS PARCELAS_PENDENTES,
-                   TO_CHAR(E.DATA_CADASTRO, 'DD/MM/YYYY') AS DATA_CADASTRO
+                   COUNT(CASE WHEN P.PAGO = TRUE THEN 1 END) AS TOTAL_PAGAS,
+                   COUNT(CASE WHEN P.PAGO = FALSE AND P.DATA_VENCIMENTO < CURRENT_DATE THEN 1 END) AS VENCIDAS,
+                   COUNT(CASE WHEN P.PAGO = FALSE AND P.DATA_VENCIMENTO >= CURRENT_DATE THEN 1 END) AS NAO_VENCIDAS
             FROM EMPRESAS E
             LEFT JOIN PARCELAS P ON E.COD_EMP = P.COD_EMP
-            GROUP BY E.COD_EMP, E.CNPJ, E.NOME_FANTASIA, E.RAZAO_SOCIAL, E.EMAIL, E.BLOQUEADO, E.PLANO, E.VALOR_MENSAL, E.DATA_CADASTRO
+            GROUP BY E.COD_EMP, E.CNPJ, E.NOME_FANTASIA, E.RAZAO_SOCIAL, E.EMAIL, 
+                     E.BLOQUEADO, E.PLANO, E.VALOR_MENSAL, E.DATA_CADASTRO
         `);
 
         res.json({ empresas: result.rows });
@@ -270,6 +273,7 @@ app.get('/empresas', async (req, res) => {
         res.status(500).json({ erro: 'Erro ao listar empresas' });
     }
 });
+
 // =============================================
 // ROTA: LISTAR PARCELAS DE UMA EMPRESA (ADMIN)
 // =============================================
