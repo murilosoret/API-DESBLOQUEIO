@@ -539,6 +539,49 @@ app.delete('/bloquear/:cnpj', async (req, res) => {
     }
 });
 
+// ROTA: VERIFICAR PARCELAS ATRASADAS
+app.get('/parcelas-atrasadas/:cnpj', async (req, res) => {
+    const senha = req.headers['x-senha'];
+    const cnpj = limparCnpj(req.params.cnpj);
+    const cnpjFormatado = formatarCnpj(cnpj);
+
+    if (senha !== SENHA_ADMIN) {
+        return res.status(401).json({ erro: 'Senha inválida' });
+    }
+
+    try {
+        const empresaResult = await pool.query(
+            'SELECT COD_EMP FROM EMPRESAS WHERE CNPJ = $1',
+            [cnpjFormatado]
+        );
+
+        if (empresaResult.rows.length === 0) {
+            return res.status(404).json({ erro: 'Empresa não encontrada' });
+        }
+
+        const codEmp = empresaResult.rows[0].cod_emp;
+
+        // Buscar apenas parcelas vencidas E não pagas
+        const parcelasResult = await pool.query(
+            `SELECT NUMERO_PARCELA, VALOR, DATA_VENCIMENTO
+             FROM PARCELAS 
+             WHERE COD_EMP = $1 
+               AND PAGO = FALSE 
+               AND DATA_VENCIMENTO < CURRENT_DATE
+             ORDER BY NUMERO_PARCELA ASC`,
+            [codEmp]
+        );
+
+        console.log(`📦 Parcelas atrasadas para empresa ${codEmp}: ${parcelasResult.rows.length}`);
+
+        res.json({ parcelas: parcelasResult.rows });
+
+    } catch (error) {
+        console.error('Erro ao buscar parcelas atrasadas:', error);
+        res.status(500).json({ erro: 'Erro ao buscar parcelas atrasadas' });
+    }
+});
+
 // =============================================
 // ROTA INICIAL
 // =============================================
