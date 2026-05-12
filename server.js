@@ -461,6 +461,35 @@ app.post('/gerar-parcelas/:cnpj', async (req, res) => {
     }
 });
 
+// Rota para remover liberação (bloquear novamente)
+app.delete('/bloquear/:cnpj', async (req, res) => {
+    const senha = req.headers['x-senha'];
+    const cnpj = limparCnpj(req.params.cnpj);
+    const cnpjFormatado = formatarCnpj(cnpj);
+
+    if (senha !== SENHA_ADMIN) {
+        return res.status(401).json({ erro: 'Senha inválida' });
+    }
+
+    try {
+        const result = await pool.query(
+            'UPDATE EMPRESAS SET BLOQUEADO = TRUE, MOTIVO_BLOQUEIO = "BLOQUEIO MANUAL" WHERE CNPJ = $1 RETURNING COD_EMP',
+            [cnpjFormatado]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ erro: 'Empresa não encontrada' });
+        }
+
+        console.log(`🔒 Cliente bloqueado: ${cnpj}`);
+        res.json({ bloqueado: true, cnpj: cnpj });
+
+    } catch (error) {
+        console.error('Erro ao bloquear:', error);
+        res.status(500).json({ erro: 'Erro ao bloquear empresa' });
+    }
+});
+
 // =============================================
 // ROTA INICIAL
 // =============================================
