@@ -317,6 +317,107 @@ app.get('/parcelas/:cnpj', async (req, res) => {
 });
 
 // =============================================
+// ROTA: DAR BAIXA EM UMA PARCELA ESPECÍFICA
+// =============================================
+app.post('/baixar-parcela/:cnpj/:numero', async (req, res) => {
+    const senha = req.headers['x-senha'];
+    const cnpj = limparCnpj(req.params.cnpj);
+    const numero = parseInt(req.params.numero);
+    const { forma_pagamento } = req.body;
+
+    console.log(`📌 Requisição de baixa - CNPJ: ${cnpj}, Parcela: ${numero}, Forma: ${forma_pagamento}`);
+    console.log(`🔑 Senha recebida: ${senha}`);
+
+    if (senha !== SENHA_ADMIN) {
+        console.log(`❌ Senha inválida: ${senha}`);
+        return res.status(401).json({ erro: 'Senha inválida' });
+    }
+
+    try {
+        const cnpjFormatado = formatarCnpj(cnpj);
+        console.log(`🔍 Buscando empresa com CNPJ: ${cnpjFormatado}`);
+
+        const empresaResult = await pool.query(
+            'SELECT COD_EMP FROM EMPRESAS WHERE CNPJ = $1',
+            [cnpjFormatado]
+        );
+
+        if (empresaResult.rows.length === 0) {
+            console.log(`❌ Empresa não encontrada para o CNPJ: ${cnpjFormatado}`);
+            return res.status(404).json({ erro: 'Empresa não encontrada' });
+        }
+
+        const codEmp = empresaResult.rows[0].cod_emp;
+        console.log(`✅ Empresa encontrada - COD_EMP: ${codEmp}`);
+
+        const updateResult = await pool.query(
+            `UPDATE PARCELAS 
+             SET PAGO = TRUE, DATA_PAGAMENTO = NOW(), FORMA_PAGAMENTO = $1 
+             WHERE COD_EMP = $2 AND NUMERO_PARCELA = $3
+             RETURNING *`,
+            [forma_pagamento || 'BAIXA MANUAL', codEmp, numero]
+        );
+
+        if (updateResult.rowCount === 0) {
+            console.log(`❌ Parcela ${numero} não encontrada para empresa ${codEmp}`);
+            return res.status(404).json({ erro: 'Parcela não encontrada' });
+        }
+
+        console.log(`✅ Parcela ${numero} da empresa ${cnpj} recebeu baixa - Forma: ${forma_pagamento}`);
+        res.json({ sucesso: true, mensagem: 'Baixa realizada com sucesso', parcela: updateResult.rows[0] });
+
+    } catch (error) {
+        console.error('❌ Erro ao dar baixa:', error);
+        res.status(500).json({ erro: 'Erro ao dar baixa na parcela', detalhe: error.message });
+    }
+});
+
+// =============================================
+// ROTA: CANCELAR BAIXA DE UMA PARCELA
+// =============================================
+app.post('/cancelar-baixa-parcela/:cnpj/:numero', async (req, res) => {
+    const senha = req.headers['x-senha'];
+    const cnpj = limparCnpj(req.params.cnpj);
+    const numero = parseInt(req.params.numero);
+
+    console.log(`📌 Requisição de cancelamento - CNPJ: ${cnpj}, Parcela: ${numero}`);
+
+    if (senha !== SENHA_ADMIN) {
+        console.log(`❌ Senha inválida: ${senha}`);
+        return res.status(401).json({ erro: 'Senha inválida' });
+    }
+
+    try {
+        const cnpjFormatado = formatarCnpj(cnpj);
+
+        const empresaResult = await pool.query(
+            'SELECT COD_EMP FROM EMPRESAS WHERE CNPJ = $1',
+            [cnpjFormatado]
+        );
+
+        if (empresaResult.rows.length === 0) {
+            return res.status(404).json({ erro: 'Empresa não encontrada' });
+        }
+
+        const codEmp = empresaResult.rows[0].cod_emp;
+
+        await pool.query(
+            `UPDATE PARCELAS 
+             SET PAGO = FALSE, DATA_PAGAMENTO = NULL, FORMA_PAGAMENTO = NULL 
+             WHERE COD_EMP = $1 AND NUMERO_PARCELA = $2`,
+            [codEmp, numero]
+        );
+
+        console.log(`✅ Baixa da parcela ${numero} da empresa ${cnpj} foi cancelada`);
+        res.json({ sucesso: true, mensagem: 'Baixa cancelada com sucesso' });
+
+    } catch (error) {
+        console.error('❌ Erro ao cancelar baixa:', error);
+        res.status(500).json({ erro: 'Erro ao cancelar baixa da parcela' });
+    }
+});
+
+// =============================================
 // ROTA INICIAL
 // =============================================
 app.get('/', (req, res) => {
