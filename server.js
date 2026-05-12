@@ -417,6 +417,50 @@ app.post('/cancelar-baixa-parcela/:cnpj/:numero', async (req, res) => {
     }
 });
 
+// ROTA: GERAR MÚLTIPLAS PARCELAS
+app.post('/gerar-parcelas/:cnpj', async (req, res) => {
+    const senha = req.headers['x-senha'];
+    const cnpj = limparCnpj(req.params.cnpj);
+    const { parcelas } = req.body;
+
+    if (senha !== SENHA_ADMIN) {
+        return res.status(401).json({ erro: 'Senha inválida' });
+    }
+
+    try {
+        const cnpjFormatado = formatarCnpj(cnpj);
+
+        const empresaResult = await pool.query(
+            'SELECT COD_EMP FROM EMPRESAS WHERE CNPJ = $1',
+            [cnpjFormatado]
+        );
+
+        if (empresaResult.rows.length === 0) {
+            return res.status(404).json({ erro: 'Empresa não encontrada' });
+        }
+
+        const codEmp = empresaResult.rows[0].cod_emp;
+
+        // Inserir as parcelas
+        for (const parcela of parcelas) {
+            await pool.query(
+                `INSERT INTO PARCELAS (COD_EMP, NUMERO_PARCELA, VALOR, DATA_VENCIMENTO, PAGO) 
+                 VALUES ($1, $2, $3, $4, $5)
+                 ON CONFLICT (COD_EMP, NUMERO_PARCELA) DO UPDATE SET 
+                 VALOR = EXCLUDED.VALOR, DATA_VENCIMENTO = EXCLUDED.DATA_VENCIMENTO`,
+                [codEmp, parcela.numero_parcela, parcela.valor, parcela.data_vencimento, parcela.pago]
+            );
+        }
+
+        console.log(`✅ Geradas ${parcelas.length} parcelas para empresa ${cnpj}`);
+        res.json({ sucesso: true, mensagem: `${parcelas.length} parcelas geradas com sucesso` });
+
+    } catch (error) {
+        console.error('Erro ao gerar parcelas:', error);
+        res.status(500).json({ erro: 'Erro ao gerar parcelas' });
+    }
+});
+
 // =============================================
 // ROTA INICIAL
 // =============================================
