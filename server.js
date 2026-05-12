@@ -1,65 +1,277 @@
 const express = require('express');
+const { Pool } = require('pg');
 const app = express();
 
 app.use(express.json());
 
-// Banco de dados em memória
-let clientesLiberados = [];
+const SENHA_ADMIN = process.env.SENHA_ADMIN || 'MINHA_SENHA_123';
 
-// Rota para VERIFICAR se está liberado (usada pelo sistema do cliente)
-app.get('/verificar/:cnpj', (req, res) => {
-    const cnpj = req.params.cnpj;
-    const liberado = clientesLiberados.includes(cnpj);
-    console.log(`Verificação: ${cnpj} - Liberado: ${liberado}`);
-    res.json({ liberado: liberado });
+// =============================================
+// CONEXÃO COM O BANCO POSTGRESQL
+// =============================================
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
 });
 
-// Rota para MARCAR como liberado (usada por você)
-app.post('/liberar/:cnpj', (req, res) => {
-    const senha = req.headers['x-senha'];
-    const cnpj = req.params.cnpj;
+// Testar conexão
+pool.connect((err, client, release) => {
+    if (err) {
+        console.error('❌ Erro ao conectar ao PostgreSQL:', err.message);
+    } else {
+        console.log('✅ Conectado ao PostgreSQL no Render');
+        release();
+    }
+});
+
+// =============================================
+// FUNÇÕES AUXILIARES
+// =============================================
+function limparCnpj(cnpj) {
+    if (!cnpj) return '';
+    return cnpj.replace(/[^0-9]/g, '');
+}
+
+function formatarCnpj(cnpj) {
+    const numeros = limparCnpj(cnpj);
+    if (numeros.length !== 14) return cnpj;
+    return numeros.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+}
+
+// =============================================
+// ROTA: REGISTRAR EMPRESA (PRIMEIRO LOGIN)
+// =============================================
+app.post('/registrar', async (req, res) => {
+    const { cnpj, razao_social, nome_fantasia, email, telefone, plano, valor_mensal } = req.body;
     
-    if (senha !== 'MINHA_SENHA_123') {
+    const cnpjLimpo = limparCnpj(cnpj);
+    const cnpjFormatado = formatarCnpj(cnpjLimpo);
+    
+    if (!cnpjLimpo || (!razao_social && !nome_fantasia)) {
+        return res.status(400).json({ 
+            erro: 'CNPJ e RAZAO_SOCIAL ou NOME_FANTASIA são obrigatórios' 
+        });
+    }
+    
+    try {
+        // Verificar se empresa já existe
+        const result = await pool.query(
+            'SELECT COD_EMP, CNPJ, NOME_FANTASIA, BLOQUEADO FROM EMPRESAS WHERE CNPJ = $1',
+            [cnpjFormatado]
+        );
+        
+        if (result.rows.length > 0) {
+            const empresa = result.rows[0];
+            
+            // Verificar parcelas pendentes
+            const parcelasResult = await pool.query(
+                `SELECT COUNT(*) as total FROM PARCELAS 
+                 WHERE COD_EMP = $1 AND PAGO = FALSE AND DATA_VENCIMENTO < CURRENT_DATE`,
+                [empresa.cod_emp]
+            );
+            
+            const temPendencia = parcelasResult.rows[0].total > 0;
+            const liberado = !empresa.bloqueado && !temPendencia;
+            
+            return res.json({
+                sucesso: true,
+                mensagem: 'Empresa já cadastrada',
+                cod_emp: empresa.cod_emp,
+                liberado: liberado,
+                pendente: temPendencia
+            });
+        }
+        
+        // Empresa nova - cadastrar
+        const nomeRazaosocial = razao_social || nome_fantasia;
+        const nomeFantasiaFinal = nome_fantasia || razao_social;
+        
+        const insertResult = await pool.query(
+            `INSERT INTO EMPRESAS 
+             (CNPJ, RAZAO_SOCIAL, NOME_FANTASIA, EMAIL, TELEFONE, PLANO, VALOR_MENSAL, DATA_CADASTRO, ATIVO, BLOQUEADO) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), TRUE, TRUE) 
+             RETURNING COD_EMP`,
+            [cnpjFormatado, nomeRazaosocial, nomeFantasiaFinal, email || null, telefone || null, plano || 'MENSAL', valor_mensal || 299.90]
+        );
+        
+        const codEmp = insertResult.rows[0].cod_emp;
+        
+        // Gerar 12 parcelas para o primeiro ano
+        const hoje = new Date();
+        for (let i = 1; i <= 12; i++) {
+            const vencimento = new Date(hoje);
+            vencimento.setMonth(hoje.getMonth() + i);
+            const dataVencimento = vencimento.toISOString().split('T')[0];
+            
+            await pool.query(
+                `INSERT INTO PARCELAS (COD_EMP, NUMERO_PARCELA, VALOR, DATA_VENCIMENTO, PAGO) 
+                 VALUES ($1, $2, $3, $4, FALSE)`,
+                [codEmp, i, valor_mensal || 299.90, dataVencimento]
+            );
+        }
+        
+        console.log(`✅ Nova empresa cadastrada: ${cnpjLimpo} - ${nomeFantasiaFinal}`);
+        
+        res.json({
+            sucesso: true,
+            mensagem: 'Empresa cadastrada com sucesso',
+            cod_emp: codEmp,
+            liberado: false,
+            pendente: true
+        });
+        
+    } catch (error) {
+        console.error('Erro ao registrar empresa:', error);
+        res.status(500).json({ erro: 'Erro interno ao cadastrar empresa' });
+    }
+});
+
+// =============================================
+// ROTA: VERIFICAR SE ESTÁ LIBERADO
+// =============================================
+app.get('/verificar/:cnpj', async (req, res) => {
+    const cnpj = limparCnpj(req.params.cnpj);
+    const cnpjFormatado = formatarCnpj(cnpj);
+    
+    try {
+        const result = await pool.query(
+            'SELECT COD_EMP, BLOQUEADO FROM EMPRESAS WHERE CNPJ = $1',
+            [cnpjFormatado]
+        );
+        
+        if (result.rows.length === 0) {
+            return res.json({ 
+                liberado: false, 
+                cadastrado: false, 
+                mensagem: 'Empresa não cadastrada' 
+            });
+        }
+        
+        const empresa = result.rows[0];
+        
+        const parcelasResult = await pool.query(
+            `SELECT COUNT(*) as total FROM PARCELAS 
+             WHERE COD_EMP = $1 AND PAGO = FALSE AND DATA_VENCIMENTO < CURRENT_DATE`,
+            [empresa.cod_emp]
+        );
+        
+        const temPendencia = parcelasResult.rows[0].total > 0;
+        const liberado = !empresa.bloqueado && !temPendencia;
+        
+        console.log(`Verificação: ${cnpj} - Liberado: ${liberado}`);
+        
+        res.json({
+            liberado: liberado,
+            cadastrado: true,
+            pendente: temPendencia,
+            parcelas_vencidas: parcelasResult.rows[0].total
+        });
+        
+    } catch (error) {
+        console.error('Erro ao verificar:', error);
+        res.status(500).json({ erro: 'Erro ao verificar status' });
+    }
+});
+
+// =============================================
+// ROTA: MARCAR COMO LIBERADO (ADMIN)
+// =============================================
+app.post('/liberar/:cnpj', async (req, res) => {
+    const senha = req.headers['x-senha'];
+    const cnpj = limparCnpj(req.params.cnpj);
+    const cnpjFormatado = formatarCnpj(cnpj);
+    
+    if (senha !== SENHA_ADMIN) {
         return res.status(401).json({ erro: 'Senha inválida' });
     }
     
-    if (!clientesLiberados.includes(cnpj)) {
-        clientesLiberados.push(cnpj);
-        console.log(`Cliente liberado: ${cnpj}`);
+    try {
+        const result = await pool.query(
+            'SELECT COD_EMP FROM EMPRESAS WHERE CNPJ = $1',
+            [cnpjFormatado]
+        );
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ erro: 'Empresa não encontrada' });
+        }
+        
+        const codEmp = result.rows[0].cod_emp;
+        
+        // Desbloquear empresa
+        await pool.query(
+            'UPDATE EMPRESAS SET BLOQUEADO = FALSE, MOTIVO_BLOQUEIO = NULL WHERE COD_EMP = $1',
+            [codEmp]
+        );
+        
+        // Marcar primeira parcela pendente como paga
+        const parcelaResult = await pool.query(
+            `SELECT COD_PAR FROM PARCELAS 
+             WHERE COD_EMP = $1 AND PAGO = FALSE 
+             ORDER BY NUMERO_PARCELA ASC LIMIT 1`,
+            [codEmp]
+        );
+        
+        if (parcelaResult.rows.length > 0) {
+            await pool.query(
+                'UPDATE PARCELAS SET PAGO = TRUE, DATA_PAGAMENTO = NOW() WHERE COD_PAR = $1',
+                [parcelaResult.rows[0].cod_par]
+            );
+        }
+        
+        // Registrar no histórico de bloqueios
+        await pool.query(
+            `INSERT INTO BLOQUEIOS (COD_EMP, DATA_DESBLOQUEIO, MOTIVO, RESPONSAVEL_DESBLOQUEIO) 
+             VALUES ($1, NOW(), 'DESBLOQUEIO_PAGAMENTO', 'ADMIN')`,
+            [codEmp]
+        );
+        
+        console.log(`✅ Cliente liberado: ${cnpj}`);
+        
+        res.json({ liberado: true, cnpj: cnpj });
+        
+    } catch (error) {
+        console.error('Erro ao liberar:', error);
+        res.status(500).json({ erro: 'Erro ao liberar empresa' });
     }
-    
-    res.json({ liberado: true, cnpj: cnpj });
 });
 
-// Rota para listar todos liberados
-app.get('/listar', (req, res) => {
+// =============================================
+// ROTA: LISTAR TODAS EMPRESAS (ADMIN)
+// =============================================
+app.get('/empresas', async (req, res) => {
     const senha = req.headers['x-senha'];
-    if (senha !== 'MINHA_SENHA_123') {
+    
+    if (senha !== SENHA_ADMIN) {
         return res.status(401).json({ erro: 'Senha inválida' });
     }
-    res.json({ liberados: clientesLiberados, total: clientesLiberados.length });
-});
-
-// Rota para remover liberação (se precisar bloquear de novo)
-app.delete('/bloquear/:cnpj', (req, res) => {
-    const senha = req.headers['x-senha'];
-    const cnpj = req.params.cnpj;
     
-    if (senha !== 'MINHA_SENHA_123') {
-        return res.status(401).json({ erro: 'Senha inválida' });
+    try {
+        const result = await pool.query(`
+            SELECT E.COD_EMP, E.CNPJ, E.NOME_FANTASIA, E.RAZAO_SOCIAL, E.EMAIL, 
+                   E.BLOQUEADO, E.PLANO, E.VALOR_MENSAL,
+                   COUNT(P.COD_PAR) AS TOTAL_PARCELAS,
+                   SUM(CASE WHEN P.PAGO = FALSE AND P.DATA_VENCIMENTO < CURRENT_DATE THEN 1 ELSE 0 END) AS PARCELAS_PENDENTES
+            FROM EMPRESAS E
+            LEFT JOIN PARCELAS P ON E.COD_EMP = P.COD_EMP
+            GROUP BY E.COD_EMP, E.CNPJ, E.NOME_FANTASIA, E.RAZAO_SOCIAL, E.EMAIL, E.BLOQUEADO, E.PLANO, E.VALOR_MENSAL
+        `);
+        
+        res.json({ empresas: result.rows });
+        
+    } catch (error) {
+        console.error('Erro ao listar empresas:', error);
+        res.status(500).json({ erro: 'Erro ao listar empresas' });
     }
-    
-    clientesLiberados = clientesLiberados.filter(c => c !== cnpj);
-    console.log(`Cliente bloqueado: ${cnpj}`);
-    res.json({ bloqueado: true, cnpj: cnpj });
 });
 
-// Rota inicial para testar se a API está no ar
+// =============================================
+// ROTA INICIAL
+// =============================================
 app.get('/', (req, res) => {
     res.json({ 
-        api: "API Desbloqueio - Funcionando!", 
+        api: "API Desbloqueio - Funcionando com PostgreSQL!", 
         status: "online",
-        versao: "1.0.0"
+        versao: "2.0.0"
     });
 });
 
@@ -67,9 +279,9 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`🚀 API rodando na porta ${PORT}`);
     console.log(`📋 Endpoints disponíveis:`);
+    console.log(`   POST /registrar - Cadastrar empresa`);
     console.log(`   GET  /verificar/:cnpj`);
     console.log(`   POST /liberar/:cnpj`);
-    console.log(`   GET  /listar`);
-    console.log(`   DELETE /bloquear/:cnpj`);
+    console.log(`   GET  /empresas - Listar todas`);
     console.log(`   GET  /`);
 });
