@@ -190,6 +190,7 @@ app.get('/empresas', async (req, res) => {
                 E.RAZAO_SOCIAL as "RAZAO_SOCIAL",
                 E.EMAIL as "EMAIL",
                 E.BLOQUEADO as "BLOQUEADO",
+                E.MOTIVO_BLOQUEIO as "MOTIVO_BLOQUEIO",
                 E.PLANO as "PLANO",
                 E.VALOR_MENSAL as "VALOR_MENSAL",
                 TO_CHAR(E.DATA_CADASTRO, 'DD/MM/YYYY') as "DATA_CADASTRO",
@@ -201,9 +202,9 @@ app.get('/empresas', async (req, res) => {
             LEFT JOIN PARCELAS P ON E.COD_EMP = P.COD_EMP
             GROUP BY 
                 E.COD_EMP, E.CNPJ, E.NOME_FANTASIA, E.RAZAO_SOCIAL, E.EMAIL, 
-                E.BLOQUEADO, E.PLANO, E.VALOR_MENSAL, E.DATA_CADASTRO
+                E.BLOQUEADO, E.MOTIVO_BLOQUEIO, E.PLANO, E.VALOR_MENSAL, E.DATA_CADASTRO
         `);
-
+        
         res.json({ empresas: result.rows });
 
     } catch (error) {
