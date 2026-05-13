@@ -204,7 +204,7 @@ app.get('/empresas', async (req, res) => {
                 E.COD_EMP, E.CNPJ, E.NOME_FANTASIA, E.RAZAO_SOCIAL, E.EMAIL, 
                 E.BLOQUEADO, E.MOTIVO_BLOQUEIO, E.PLANO, E.VALOR_MENSAL, E.DATA_CADASTRO
         `);
-        
+
         res.json({ empresas: result.rows });
 
     } catch (error) {
