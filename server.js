@@ -91,7 +91,7 @@ app.post('/registrar', async (req, res) => {
              (CNPJ, RAZAO_SOCIAL, NOME_FANTASIA, EMAIL, TELEFONE, PLANO, VALOR_MENSAL, DATA_CADASTRO, ATIVO, BLOQUEADO) 
              VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), TRUE, TRUE) 
              RETURNING COD_EMP`,
-            [cnpjFormatado, nomeRazaosocial, nomeFantasiaFinal, email || null, telefone || null, plano || 'MENSAL', valor_mensal || 299.90]
+            [cnpjFormatado, nomeRazaosocial, nomeFantasiaFinal, email || null, telefone || null, plano || 'MENSAL', valor_mensal || 130.00]
         );
 
         const codEmp = insertResult.rows[0].cod_emp;
@@ -106,7 +106,7 @@ app.post('/registrar', async (req, res) => {
             await pool.query(
                 `INSERT INTO PARCELAS (COD_EMP, NUMERO_PARCELA, VALOR, DATA_VENCIMENTO, PAGO) 
                  VALUES ($1, $2, $3, $4, FALSE)`,
-                [codEmp, i, valor_mensal || 299.90, dataVencimento]
+                [codEmp, i, valor_mensal || 130.00, dataVencimento]
             );
         }
 
