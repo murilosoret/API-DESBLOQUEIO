@@ -19,7 +19,7 @@ pool.connect((err, client, release) => {
     if (err) {
         console.error('❌ Erro ao conectar ao PostgreSQL:', err.message);
     } else {
-        console.log('✅ Conectado ao PostgreSQL no Render');
+        console.log('✅ Conectado ao PostgreSQL no Neon');
         release();
     }
 });
