@@ -29,13 +29,40 @@ pool.connect((err, client, release) => {
 // =============================================
 function limparCnpj(cnpj) {
     if (!cnpj) return '';
-    return cnpj.replace(/[^0-9]/g, '');
+    // Para CNPJ alfanumérico, mantém letras e números
+    // Remove apenas caracteres especiais como . / - 
+    return cnpj.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
 }
 
 function formatarCnpj(cnpj) {
-    const numeros = limparCnpj(cnpj);
-    if (numeros.length !== 14) return cnpj;
-    return numeros.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+    const limpo = limparCnpj(cnpj);
+    if (limpo.length !== 14) return cnpj;
+
+    // Formata o CNPJ alfanumérico
+    // Exemplo: 12ABC34501DE35 -> 12.ABC.345/01DE-35
+    const primeiro = limpo.substring(0, 2);
+    const segundo = limpo.substring(2, 5);
+    const terceiro = limpo.substring(5, 8);
+    const quarto = limpo.substring(8, 12);
+    const quinto = limpo.substring(12, 14);
+
+    return `${primeiro}.${segundo}.${terceiro}/${quarto}-${quinto}`;
+}
+
+// =============================================
+// VALIDAÇÃO DE CNPJ (ALFANUMÉRICO OU NUMÉRICO)
+// =============================================
+function validarCnpjFormat(cnpj) {
+    if (!cnpj) return false;
+
+    // Verifica se tem 14 caracteres após limpeza
+    const limpo = limparCnpj(cnpj);
+    if (limpo.length !== 14) return false;
+
+    // Verifica se é um CNPJ alfanumérico válido
+    // Padrão: 12.ABC.345/01DE-35
+    const regex = /^(\d{2})\.([A-Z0-9]{3})\.(\d{3})\/([A-Z0-9]{4})-(\d{2})$/;
+    return regex.test(cnpj);
 }
 
 // =============================================
@@ -50,6 +77,13 @@ app.post('/registrar', async (req, res) => {
     if (!cnpjLimpo || (!razao_social && !nome_fantasia)) {
         return res.status(400).json({
             erro: 'CNPJ e RAZAO_SOCIAL ou NOME_FANTASIA são obrigatórios'
+        });
+    }
+
+    // Validar formato do CNPJ (aceita alfanumérico)
+    if (cnpjLimpo.length !== 14) {
+        return res.status(400).json({
+            erro: 'CNPJ inválido. O CNPJ deve ter 14 caracteres (incluindo letras para alfanumérico)'
         });
     }
 
