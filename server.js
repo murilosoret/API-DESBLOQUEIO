@@ -1,10 +1,32 @@
 const express = require('express');
 const { Pool } = require('pg');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const cors = require('cors');
+const rateLimit = require('express-rate-limit');
+
 const app = express();
+
+app.use(cors({
+    origin: [
+        'https://axiomsoft.com.br',
+        'https://www.axiomsoft.com.br',
+        'http://localhost:5173',
+        'http://localhost:3000'
+    ],
+    credentials: true
+}));
 
 app.use(express.json());
 
 const SENHA_ADMIN = process.env.SENHA_ADMIN || 'MINHA_SENHA_123';
+
+// Rate limit no login (evita brute force)
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,   // 15 minutos
+    max: 5,                      // 5 tentativas por IP
+    message: { erro: 'Muitas tentativas de login. Aguarde 15 minutos.' }
+});
 
 // =============================================
 // CONEXÃO COM O BANCO POSTGRESQL
@@ -863,5 +885,110 @@ app.delete('/notificacoes/:id', async (req, res) => {
     } catch (error) {
         console.error('❌ Erro ao desativar notificação:', error);
         res.status(500).json({ erro: 'Erro ao desativar' });
+    }
+});
+
+// =============================================
+// MIDDLEWARE: AUTENTICAÇÃO JWT
+// =============================================
+function auth(req, res, next) {
+    const header = req.headers['authorization'];
+
+    if (!header || !header.startsWith('Bearer ')) {
+        return res.status(401).json({ erro: 'Token não fornecido' });
+    }
+
+    const token = header.replace('Bearer ', '');
+
+    try {
+        req.user = jwt.verify(token, process.env.JWT_SECRET);
+        next();
+    } catch (e) {
+        return res.status(401).json({ erro: 'Token inválido ou expirado' });
+    }
+}
+
+// =============================================
+// ROTA: LOGIN
+// =============================================
+app.post('/login', loginLimiter, async (req, res) => {
+    const { usuario, senha, tipo } = req.body;
+
+    if (!usuario || !senha) {
+        return res.status(400).json({ erro: 'Usuário e senha são obrigatórios' });
+    }
+
+    // Por enquanto só admin
+    if (tipo === 'cliente') {
+        return res.status(501).json({ erro: 'Área do cliente ainda não disponível' });
+    }
+
+    try {
+        const r = await pool.query(
+            'SELECT * FROM usuarios_admin WHERE usuario = $1 AND ativo = TRUE',
+            [usuario]
+        );
+
+        if (r.rows.length === 0) {
+            console.log(`❌ Login falhou - usuário não encontrado: ${usuario}`);
+            return res.status(401).json({ erro: 'Usuário ou senha inválidos' });
+        }
+
+        const u = r.rows[0];
+        const ok = await bcrypt.compare(senha, u.senha_hash);
+
+        if (!ok) {
+            console.log(`❌ Login falhou - senha inválida: ${usuario}`);
+            return res.status(401).json({ erro: 'Usuário ou senha inválidos' });
+        }
+
+        const token = jwt.sign(
+            {
+                id: u.cod_admin,
+                usuario: u.usuario,
+                nome: u.nome,
+                role: u.role
+            },
+            process.env.JWT_SECRET,
+            { expiresIn: '8h' }
+        );
+
+        console.log(`✅ Login OK: ${usuario} (${u.role})`);
+
+        res.json({
+            token,
+            user: {
+                id: u.cod_admin,
+                usuario: u.usuario,
+                nome: u.nome,
+                role: u.role
+            }
+        });
+
+    } catch (error) {
+        console.error('Erro no login:', error);
+        res.status(500).json({ erro: 'Erro interno no login' });
+    }
+});
+
+// =============================================
+// ROTA: VALIDAR TOKEN
+// =============================================
+app.get('/me', auth, async (req, res) => {
+    try {
+        const r = await pool.query(
+            'SELECT cod_admin, usuario, nome, role, ativo FROM usuarios_admin WHERE cod_admin = $1',
+            [req.user.id]
+        );
+
+        if (r.rows.length === 0 || !r.rows[0].ativo) {
+            return res.status(401).json({ erro: 'Usuário inativo' });
+        }
+
+        res.json({ user: r.rows[0] });
+
+    } catch (error) {
+        console.error('Erro em /me:', error);
+        res.status(500).json({ erro: 'Erro interno' });
     }
 });
