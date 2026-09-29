@@ -13,11 +13,12 @@ app.use(cors({
         'https://axiomsoft.com.br',
         'https://www.axiomsoft.com.br',
         'http://localhost:5173',
-        'http://localhost:3000'
+        'http://localhost:3000',
     ],
-    credentials: true
+    credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-senha'], 
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],         
 }));
-
 app.use(express.json());
 
 const SENHA_ADMIN = process.env.SENHA_ADMIN || 'MINHA_SENHA_123';
