@@ -964,3 +964,83 @@ app.get('/me', auth, async (req, res) => {
         res.status(500).json({ erro: 'Erro interno' });
     }
 });
+
+// =============================================
+// ROTA: GERAR LICENÇA
+// =============================================
+const crypto = require('crypto');
+
+app.post('/licencas/gerar', authOuSenha, async (req, res) => {
+    const { cnpj, cliente, id_maquina } = req.body;
+
+    if (!cnpj || !cliente || !id_maquina) {
+        return res.status(400).json({ erro: 'CNPJ, cliente e ID da máquina são obrigatórios' });
+    }
+
+    const cnpjLimpo = cnpj.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+    if (cnpjLimpo.length !== 14) {
+        return res.status(400).json({ erro: 'CNPJ inválido' });
+    }
+
+    try {
+        const privateKeyBase64 = process.env.PRIVATE_KEY_BASE64;
+        if (!privateKeyBase64) {
+            console.error('❌ PRIVATE_KEY_BASE64 não configurada');
+            return res.status(500).json({ erro: 'Chave privada não configurada no servidor' });
+        }
+
+        // Aceita base64 puro (DER) ou PEM completo
+        let privateKeyPem;
+        if (privateKeyBase64.includes('-----BEGIN')) {
+            privateKeyPem = privateKeyBase64;
+        } else {
+            // Remove quebras/espaços e reconstrói o PEM
+            const limpo = privateKeyBase64.replace(/\s/g, '');
+            const linhas = limpo.match(/.{1,64}/g).join('\n');
+            privateKeyPem = `-----BEGIN PRIVATE KEY-----\n${linhas}\n-----END PRIVATE KEY-----\n`;
+        }
+
+        // Validade: +1 ano
+        const hoje = new Date();
+        const validade = new Date(hoje);
+        validade.setFullYear(validade.getFullYear() + 1);
+        const validadeStr = validade.toISOString().split('T')[0];
+
+        const licenca = {
+            cnpj: cnpjLimpo,
+            cliente: cliente.trim(),
+            validade: validadeStr,
+            plano: 'MENSAL',
+            idMaquina: id_maquina.trim()
+        };
+
+        const jsonStr = JSON.stringify(licenca);
+        const dadosBase64 = Buffer.from(jsonStr, 'utf8').toString('base64');
+
+        const sign = crypto.createSign('RSA-SHA256');
+        sign.update(dadosBase64);
+        sign.end();
+        const assinaturaBuffer = sign.sign(privateKeyPem);
+        const assinaturaBase64 = assinaturaBuffer.toString('base64');
+
+        const licencaFinal = {
+            dados: dadosBase64,
+            assinatura: assinaturaBase64
+        };
+
+        const arquivoJson = JSON.stringify(licencaFinal, null, 2);
+        const arquivoBase64 = Buffer.from(arquivoJson, 'utf8').toString('base64');
+
+        console.log(`✅ Licença gerada: ${cnpjLimpo} - ${cliente}`);
+
+        res.json({
+            sucesso: true,
+            arquivo_base64: arquivoBase64,
+            nome_arquivo: `${cnpjLimpo}.dat`
+        });
+
+    } catch (error) {
+        console.error('❌ Erro ao gerar licença:', error);
+        res.status(500).json({ erro: 'Erro ao gerar licença', detalhe: error.message });
+    }
+});
