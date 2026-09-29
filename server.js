@@ -802,12 +802,17 @@ app.get('/notificacoes', async (req, res) => {
     const codEmp = req.query.codEmp ? parseInt(req.query.codEmp) : null;
 
     try {
+        // Limpa expiradas
+        await pool.query(
+            `DELETE FROM notificacoes
+             WHERE expira_em IS NOT NULL AND expira_em < now()`
+        );
+
         let query, params;
 
         if (codEmp) {
-            // Globais + individuais dessa empresa
             query = `
-                SELECT cod_notif, titulo, mensagem, tipo, data_criacao, cod_emp
+                SELECT cod_notif, titulo, mensagem, tipo, data_criacao, cod_emp, expira_em
                 FROM notificacoes
                 WHERE ativo = TRUE
                   AND (cod_emp IS NULL OR cod_emp = $1)
@@ -816,9 +821,8 @@ app.get('/notificacoes', async (req, res) => {
             `;
             params = [codEmp];
         } else {
-            // Só globais
             query = `
-                SELECT cod_notif, titulo, mensagem, tipo, data_criacao, cod_emp
+                SELECT cod_notif, titulo, mensagem, tipo, data_criacao, cod_emp, expira_em
                 FROM notificacoes
                 WHERE ativo = TRUE AND cod_emp IS NULL
                 ORDER BY data_criacao DESC
@@ -838,7 +842,8 @@ app.get('/notificacoes', async (req, res) => {
 
 // CRIAR notificação (admin)
 app.post('/notificacoes', authOuSenha, async (req, res) => {
-    const { titulo, mensagem, tipo, codEmp } = req.body;
+    const { titulo, mensagem, tipo, codEmp, cod_emp, expira_em } = req.body;
+    const empresaFinal = codEmp ?? cod_emp ?? null;
 
     if (!titulo || !mensagem) {
         return res.status(400).json({ erro: 'Título e mensagem são obrigatórios' });
@@ -846,14 +851,15 @@ app.post('/notificacoes', authOuSenha, async (req, res) => {
 
     try {
         const result = await pool.query(
-            `INSERT INTO notificacoes (titulo, mensagem, tipo, ativo, cod_emp)
-             VALUES ($1, $2, $3, TRUE, $4)
-             RETURNING cod_notif, titulo, mensagem, tipo, data_criacao, cod_emp`,
+            `INSERT INTO notificacoes (titulo, mensagem, tipo, ativo, cod_emp, expira_em)
+             VALUES ($1, $2, $3, TRUE, $4, $5)
+             RETURNING cod_notif, titulo, mensagem, tipo, data_criacao, cod_emp, expira_em`,
             [
                 titulo.trim(),
                 mensagem.trim(),
                 tipo || 'info',
-                codEmp || null
+                empresaFinal,
+                expira_em || null,
             ]
         );
 
