@@ -760,3 +760,108 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`🚀 API rodando na porta ${PORT} com PostgreSQL`);
 });
+
+// =============================================
+// ROTAS: NOTIFICAÇÕES
+// =============================================
+
+// LISTAR notificações ativas (globais + da empresa, se codEmp informado)
+app.get('/notificacoes', async (req, res) => {
+    const codEmp = req.query.codEmp ? parseInt(req.query.codEmp) : null;
+
+    try {
+        let query, params;
+
+        if (codEmp) {
+            // Globais + individuais dessa empresa
+            query = `
+                SELECT cod_notif, titulo, mensagem, tipo, data_criacao, cod_emp
+                FROM notificacoes
+                WHERE ativo = TRUE
+                  AND (cod_emp IS NULL OR cod_emp = $1)
+                ORDER BY data_criacao DESC
+                LIMIT 50
+            `;
+            params = [codEmp];
+        } else {
+            // Só globais
+            query = `
+                SELECT cod_notif, titulo, mensagem, tipo, data_criacao, cod_emp
+                FROM notificacoes
+                WHERE ativo = TRUE AND cod_emp IS NULL
+                ORDER BY data_criacao DESC
+                LIMIT 50
+            `;
+            params = [];
+        }
+
+        const result = await pool.query(query, params);
+        res.json(result.rows);
+
+    } catch (error) {
+        console.error('❌ Erro ao listar notificações:', error);
+        res.status(500).json({ erro: 'Erro ao listar notificações' });
+    }
+});
+
+// CRIAR notificação (admin)
+app.post('/notificacoes', async (req, res) => {
+    const senha = req.headers['x-senha'];
+
+    if (senha !== SENHA_ADMIN) {
+        return res.status(401).json({ erro: 'Senha inválida' });
+    }
+
+    const { titulo, mensagem, tipo, codEmp } = req.body;
+
+    if (!titulo || !mensagem) {
+        return res.status(400).json({ erro: 'Título e mensagem são obrigatórios' });
+    }
+
+    try {
+        const result = await pool.query(
+            `INSERT INTO notificacoes (titulo, mensagem, tipo, ativo, cod_emp)
+             VALUES ($1, $2, $3, TRUE, $4)
+             RETURNING cod_notif, titulo, mensagem, tipo, data_criacao, cod_emp`,
+            [
+                titulo.trim(),
+                mensagem.trim(),
+                tipo || 'info',
+                codEmp || null
+            ]
+        );
+
+        console.log(`✅ Notificação criada: ${titulo}`);
+        res.status(201).json(result.rows[0]);
+
+    } catch (error) {
+        console.error('❌ Erro ao criar notificação:', error);
+        res.status(500).json({ erro: 'Erro ao criar notificação' });
+    }
+});
+
+// DESATIVAR notificação (soft delete)
+app.delete('/notificacoes/:id', async (req, res) => {
+    const senha = req.headers['x-senha'];
+
+    if (senha !== SENHA_ADMIN) {
+        return res.status(401).json({ erro: 'Senha inválida' });
+    }
+
+    try {
+        const result = await pool.query(
+            'UPDATE notificacoes SET ativo = FALSE WHERE cod_notif = $1',
+            [parseInt(req.params.id)]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ erro: 'Notificação não encontrada' });
+        }
+
+        res.json({ sucesso: true });
+
+    } catch (error) {
+        console.error('❌ Erro ao desativar notificação:', error);
+        res.status(500).json({ erro: 'Erro ao desativar' });
+    }
+});
