@@ -16,8 +16,8 @@ app.use(cors({
         'http://localhost:3000',
     ],
     credentials: true,
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-senha'], 
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],         
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-senha'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
 }));
 app.use(express.json());
 
@@ -87,6 +87,29 @@ function validarCnpjFormat(cnpj) {
     // Padrão: 12.ABC.345/01DE-35
     const regex = /^(\d{2})\.([A-Z0-9]{3})\.(\d{3})\/([A-Z0-9]{4})-(\d{2})$/;
     return regex.test(cnpj);
+}
+
+// =============================================
+// MIDDLEWARE: aceita x-senha OU JWT
+// =============================================
+function authOuSenha(req, res, next) {
+    // 1) x-senha (JavaFX desktop legado)
+    if (req.headers['x-senha'] === SENHA_ADMIN) {
+        return next();
+    }
+
+    // 2) JWT (site web novo)
+    const header = req.headers['authorization'];
+    if (header && header.startsWith('Bearer ')) {
+        try {
+            req.user = jwt.verify(header.replace('Bearer ', ''), process.env.JWT_SECRET);
+            return next();
+        } catch (e) {
+            // token inválido, cai no 401 abaixo
+        }
+    }
+
+    return res.status(401).json({ erro: 'Não autenticado' });
 }
 
 // =============================================
@@ -232,13 +255,7 @@ app.get('/verificar/:cnpj', async (req, res) => {
 // =============================================
 // ROTA: LISTAR TODAS EMPRESAS (ADMIN)
 // =============================================
-app.get('/empresas', async (req, res) => {
-    const senha = req.headers['x-senha'];
-
-    if (senha !== SENHA_ADMIN) {
-        return res.status(401).json({ erro: 'Senha inválida' });
-    }
-
+app.get('/empresas', authOuSenha, async (req, res) => {
     try {
         const result = await pool.query(`
             SELECT 
@@ -274,14 +291,9 @@ app.get('/empresas', async (req, res) => {
 // =============================================
 // ROTA: LISTAR PARCELAS DE UMA EMPRESA
 // =============================================
-app.get('/parcelas/:cnpj', async (req, res) => {
-    const senha = req.headers['x-senha'];
+app.get('/parcelas/:cnpj', authOuSenha, async (req, res) => {
     const cnpj = limparCnpj(req.params.cnpj);
     const cnpjFormatado = formatarCnpj(cnpj);
-
-    if (senha !== SENHA_ADMIN) {
-        return res.status(401).json({ erro: 'Senha inválida' });
-    }
 
     try {
         const empresaResult = await pool.query(
@@ -324,14 +336,9 @@ app.get('/parcelas/:cnpj', async (req, res) => {
 // =============================================
 // ROTA: LIBERAR EMPRESA
 // =============================================
-app.post('/liberar/:cnpj', async (req, res) => {
-    const senha = req.headers['x-senha'];
+app.post('/liberar/:cnpj', authOuSenha, async (req, res) => {
     const cnpj = limparCnpj(req.params.cnpj);
     const cnpjFormatado = formatarCnpj(cnpj);
-
-    if (senha !== SENHA_ADMIN) {
-        return res.status(401).json({ erro: 'Senha inválida' });
-    }
 
     try {
         const result = await pool.query(
@@ -361,14 +368,9 @@ app.post('/liberar/:cnpj', async (req, res) => {
 // =============================================
 // ROTA: BLOQUEAR EMPRESA
 // =============================================
-app.delete('/bloquear/:cnpj', async (req, res) => {
-    const senha = req.headers['x-senha'];
+app.delete('/bloquear/:cnpj', authOuSenha, async (req, res) => {
     const cnpj = limparCnpj(req.params.cnpj);
     const cnpjFormatado = formatarCnpj(cnpj);
-
-    if (senha !== SENHA_ADMIN) {
-        return res.status(401).json({ erro: 'Senha inválida' });
-    }
 
     try {
         const result = await pool.query(
@@ -391,18 +393,13 @@ app.delete('/bloquear/:cnpj', async (req, res) => {
 // =============================================
 // ROTA: DAR BAIXA EM UMA PARCELA
 // =============================================
-app.post('/baixar-parcela/:cnpj/:numero', async (req, res) => {
-    const senha = req.headers['x-senha'];
+app.post('/baixar-parcela/:cnpj/:numero', authOuSenha, async (req, res) => {
     const cnpj = limparCnpj(req.params.cnpj);
     const cnpjFormatado = formatarCnpj(cnpj);
     const numero = parseInt(req.params.numero);
     const { forma_pagamento } = req.body;
 
     console.log(`📌 Baixar parcela - CNPJ: ${cnpj}, Parcela: ${numero}, Forma: ${forma_pagamento}`);
-
-    if (senha !== SENHA_ADMIN) {
-        return res.status(401).json({ erro: 'Senha inválida' });
-    }
 
     try {
         const empresaResult = await pool.query(
@@ -442,17 +439,12 @@ app.post('/baixar-parcela/:cnpj/:numero', async (req, res) => {
 // =============================================
 // ROTA: CANCELAR BAIXA DE UMA PARCELA
 // =============================================
-app.post('/cancelar-baixa-parcela/:cnpj/:numero', async (req, res) => {
-    const senha = req.headers['x-senha'];
+app.post('/cancelar-baixa-parcela/:cnpj/:numero', authOuSenha, async (req, res) => {
     const cnpj = limparCnpj(req.params.cnpj);
     const cnpjFormatado = formatarCnpj(cnpj);
     const numero = parseInt(req.params.numero);
 
     console.log(`📌 Cancelar baixa - CNPJ: ${cnpj}, Parcela: ${numero}`);
-
-    if (senha !== SENHA_ADMIN) {
-        return res.status(401).json({ erro: 'Senha inválida' });
-    }
 
     try {
         const empresaResult = await pool.query(
@@ -491,18 +483,13 @@ app.post('/cancelar-baixa-parcela/:cnpj/:numero', async (req, res) => {
 // =============================================
 // ROTA: GERAR MÚLTIPLAS PARCELAS
 // =============================================
-app.post('/gerar-parcelas/:cnpj', async (req, res) => {
-    const senha = req.headers['x-senha'];
+app.post('/gerar-parcelas/:cnpj', authOuSenha, async (req, res) => {
     const cnpj = limparCnpj(req.params.cnpj);
     const cnpjFormatado = formatarCnpj(cnpj);
     const { parcelas } = req.body;
 
     console.log(`📌 Gerar parcelas - CNPJ: ${cnpj}`);
     console.log(`📦 Parcelas a gerar: ${parcelas.length}`);
-
-    if (senha !== SENHA_ADMIN) {
-        return res.status(401).json({ erro: 'Senha inválida' });
-    }
 
     try {
         const empresaResult = await pool.query(
@@ -562,14 +549,9 @@ app.post('/gerar-parcelas/:cnpj', async (req, res) => {
 // =============================================
 // ROTA: ALTERNAR BLOQUEIO MANUAL (Toggle)
 // =============================================
-app.post('/empresa/:cnpj/toggle-bloqueio', async (req, res) => {
-    const senha = req.headers['x-senha'];
+app.post('/empresa/:cnpj/toggle-bloqueio', authOuSenha, async (req, res) => {
     const cnpj = limparCnpj(req.params.cnpj);
     const cnpjFormatado = formatarCnpj(cnpj);
-
-    if (senha !== SENHA_ADMIN) {
-        return res.status(401).json({ erro: 'Senha inválida' });
-    }
 
     try {
         const empresaResult = await pool.query(
@@ -829,13 +811,7 @@ app.get('/notificacoes', async (req, res) => {
 });
 
 // CRIAR notificação (admin)
-app.post('/notificacoes', async (req, res) => {
-    const senha = req.headers['x-senha'];
-
-    if (senha !== SENHA_ADMIN) {
-        return res.status(401).json({ erro: 'Senha inválida' });
-    }
-
+app.post('/notificacoes', authOuSenha, async (req, res) => {
     const { titulo, mensagem, tipo, codEmp } = req.body;
 
     if (!titulo || !mensagem) {
@@ -865,13 +841,7 @@ app.post('/notificacoes', async (req, res) => {
 });
 
 // DESATIVAR notificação (soft delete)
-app.delete('/notificacoes/:id', async (req, res) => {
-    const senha = req.headers['x-senha'];
-
-    if (senha !== SENHA_ADMIN) {
-        return res.status(401).json({ erro: 'Senha inválida' });
-    }
-
+app.delete('/notificacoes/:id', authOuSenha, async (req, res) => {
     try {
         const result = await pool.query(
             'UPDATE notificacoes SET ativo = FALSE WHERE cod_notif = $1',
@@ -891,7 +861,7 @@ app.delete('/notificacoes/:id', async (req, res) => {
 });
 
 // =============================================
-// MIDDLEWARE: AUTENTICAÇÃO JWT
+// MIDDLEWARE: AUTENTICAÇÃO JWT (usado em /me)
 // =============================================
 function auth(req, res, next) {
     const header = req.headers['authorization'];
