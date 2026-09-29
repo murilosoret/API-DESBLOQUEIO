@@ -611,14 +611,40 @@ app.get('/empresa/:cnpj/status-bloqueio', async (req, res) => {
 
         const empresa = empresaResult.rows[0];
 
-        // PRIORIDADE 1: BLOQUEIO MANUAL
+        // PRIORIDADE 1: BLOQUEIO (manual OU automático)
         if (empresa.bloqueado === true) {
+            const motivo = empresa.motivo_bloqueio || 'BLOQUEIO_MANUAL';
+            const isManual = motivo.toUpperCase().includes('MANUAL');
+
+            // 🔥 Calcula os dias de atraso também (para mostrar no aviso)
+            const parcelasResult = await pool.query(
+                `SELECT 
+            COUNT(*) as total,
+            MIN(DATA_VENCIMENTO) as primeira_vencida
+         FROM PARCELAS 
+         WHERE COD_EMP = $1 AND PAGO = FALSE AND DATA_VENCIMENTO < CURRENT_DATE`,
+                [empresa.cod_emp]
+            );
+
+            let diasAtraso = 0;
+            if (parcelasResult.rows[0].total > 0) {
+                const primeiraVencimento = new Date(parcelasResult.rows[0].primeira_vencida);
+                const hoje = new Date();
+                primeiraVencimento.setHours(0, 0, 0, 0);
+                hoje.setHours(0, 0, 0, 0);
+                diasAtraso = Math.floor((hoje - primeiraVencimento) / (1000 * 60 * 60 * 24));
+            }
+
             return res.json({
                 cadastrada: true,
                 bloqueado: true,
-                motivo: empresa.motivo_bloqueio || 'BLOQUEIO_MANUAL',
-                bloqueio_manual: true,
-                pode_desbloquear: true
+                motivo: motivo,
+                bloqueio_manual: isManual,   // 🔥 só true se for manual de verdade
+                pode_desbloquear: true,
+                nivel_aviso: 3,
+                dias_atraso: diasAtraso,
+                dias_restantes: 0,
+                parcelas_vencidas: parcelasResult.rows[0].total
             });
         }
 
