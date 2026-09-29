@@ -802,7 +802,7 @@ app.get('/notificacoes', async (req, res) => {
     const codEmp = req.query.codEmp ? parseInt(req.query.codEmp) : null;
 
     try {
-        // Limpa expiradas
+        // Limpa expiradas antes de listar
         await pool.query(
             `DELETE FROM notificacoes
              WHERE expira_em IS NOT NULL AND expira_em < now()`
@@ -814,8 +814,7 @@ app.get('/notificacoes', async (req, res) => {
             query = `
                 SELECT cod_notif, titulo, mensagem, tipo, data_criacao, cod_emp, expira_em
                 FROM notificacoes
-                WHERE ativo = TRUE
-                  AND (cod_emp IS NULL OR cod_emp = $1)
+                WHERE (cod_emp IS NULL OR cod_emp = $1)
                 ORDER BY data_criacao DESC
                 LIMIT 50
             `;
@@ -824,7 +823,7 @@ app.get('/notificacoes', async (req, res) => {
             query = `
                 SELECT cod_notif, titulo, mensagem, tipo, data_criacao, cod_emp, expira_em
                 FROM notificacoes
-                WHERE ativo = TRUE AND cod_emp IS NULL
+                WHERE cod_emp IS NULL
                 ORDER BY data_criacao DESC
                 LIMIT 50
             `;
@@ -872,11 +871,11 @@ app.post('/notificacoes', authOuSenha, async (req, res) => {
     }
 });
 
-// DESATIVAR notificação (soft delete)
+// DELETAR notificação DE VERDADE (hard delete)
 app.delete('/notificacoes/:id', authOuSenha, async (req, res) => {
     try {
         const result = await pool.query(
-            'UPDATE notificacoes SET ativo = FALSE WHERE cod_notif = $1',
+            'DELETE FROM notificacoes WHERE cod_notif = $1',
             [parseInt(req.params.id)]
         );
 
@@ -884,11 +883,12 @@ app.delete('/notificacoes/:id', authOuSenha, async (req, res) => {
             return res.status(404).json({ erro: 'Notificação não encontrada' });
         }
 
+        console.log(`🗑️ Notificação ${req.params.id} deletada`);
         res.json({ sucesso: true });
 
     } catch (error) {
-        console.error('❌ Erro ao desativar notificação:', error);
-        res.status(500).json({ erro: 'Erro ao desativar' });
+        console.error('❌ Erro ao deletar notificação:', error);
+        res.status(500).json({ erro: 'Erro ao deletar' });
     }
 });
 
